@@ -25,6 +25,14 @@ The extension makes the pledge list more compact by grouping pledges with the sa
 4. Select this folder: `C:\Users\KjetilPedersen\dev\hangar-helper`.
 5. Open the RSI pledges page while logged in.
 
+## Download Packaged Extension
+
+Download the latest packaged extension from GitHub Releases:
+
+- [hangar-helper.crx](https://github.com/kjtl/hangar-helper/releases/latest/download/hangar-helper.crx)
+
+Maintainer note: keep `hangar-helper.pem` private. It is the signing key for the `.crx` package and should not be published or linked as a public download.
+
 ## Development Notes
 
 The RSI page is authenticated, so the implementation uses the page's existing pledge markup and built-in paginator URLs. If the page structure differs from the current selectors, adjust `src/content.js` after inspecting sanitized markup only.
