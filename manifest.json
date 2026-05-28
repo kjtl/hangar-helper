@@ -1,0 +1,27 @@
+{
+  "manifest_version": 3,
+  "name": "Hangar Helper",
+  "version": "0.1.0",
+  "description": "A read-only compact view for the RSI pledges page.",
+  "content_scripts": [
+    {
+      "matches": [
+        "https://robertsspaceindustries.com/en/account/pledges*",
+        "https://robertsspaceindustries.com/account/pledges*",
+        "https://*.robertsspaceindustries.com/en/account/pledges*",
+        "https://*.robertsspaceindustries.com/account/pledges*",
+        "https://robertsspaceindustries.com/en/account/buy-back-pledges*",
+        "https://robertsspaceindustries.com/account/buy-back-pledges*",
+        "https://*.robertsspaceindustries.com/en/account/buy-back-pledges*",
+        "https://*.robertsspaceindustries.com/account/buy-back-pledges*"
+      ],
+      "js": [
+        "src/content.js"
+      ],
+      "css": [
+        "src/styles.css"
+      ],
+      "run_at": "document_start"
+    }
+  ]
+}
