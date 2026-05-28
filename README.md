@@ -1,6 +1,6 @@
 # Hangar Helper
 
-[Download packaged extension](https://github.com/kjtl/hangar-helper/raw/main/hangar-helper.crx)
+[Download Hangar Helper](https://github.com/kjtl/hangar-helper/raw/main/hangar-helper.zip)
 
 Hangar Helper is a read-only Chrome extension for the authenticated RSI pledge page:
 
@@ -23,9 +23,10 @@ The extension makes the pledge list more compact by grouping pledges with the sa
 
 1. Open `chrome://extensions`.
 2. Enable Developer mode.
-3. Click **Load unpacked**.
-4. Select this folder: `C:\Users\KjetilPedersen\dev\hangar-helper`.
-5. Open the RSI pledges page while logged in.
+3. Download and unzip `hangar-helper.zip`.
+4. Click **Load unpacked**.
+5. Select the unzipped `hangar-helper` folder.
+6. Open the RSI pledges page while logged in.
 
 ## Development Notes
 
