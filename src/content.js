@@ -15,6 +15,7 @@
   const PAGE_CACHE_PREFIX = "hangar-helper:pledge-page:";
   const PLEDGE_AGGREGATE_CACHE_KEY = `${PAGE_CACHE_PREFIX}aggregate`;
   const PLEDGE_AGGREGATE_CACHE_VERSION = 2;
+  const REMOVED_PLEDGE_IDS_KEY = "hangar-helper:removed-pledge-ids";
   const PAGE_SIZES = [10, 25, 50, 100];
   const SESSION_ID_KEY = "hangar-helper:session-id";
 
@@ -521,15 +522,8 @@
         applyCurrentFilters();
       });
 
-      toolbar.querySelector("[data-hh-reload]").addEventListener("click", async () => {
-        await clearPledgePageCache();
-        currentCards = [];
-        currentFilteredGroups = [];
-        currentGroups = [];
-        currentTotalCards = 0;
-        currentPage = 1;
-        isAggregated = false;
-        await render();
+      toolbar.querySelector("[data-hh-reload]").addEventListener("click", () => {
+        void reloadPledgesFromServer();
       });
 
       toolbar.querySelector("[data-hh-pager='top']").addEventListener("click", handlePagerClick);
@@ -626,6 +620,8 @@
       bottomPager = ensureBottomPager(parent);
     }
 
+    removeStaleSummaries(groups);
+
     groups.forEach((group) => {
       group.cards.forEach((card) => {
         card.setAttribute(STYLE_MARKER, "card");
@@ -704,6 +700,15 @@
       : group.title;
 
     return summary;
+  }
+
+  function removeStaleSummaries(groups) {
+    const keys = new Set(groups.map((group) => group.key));
+    document.querySelectorAll(SUMMARY_SELECTOR).forEach((summary) => {
+      if (!keys.has(summary.dataset.hhGroupKey)) {
+        summary.remove();
+      }
+    });
   }
 
   function findExistingSummary(groupKey) {
@@ -1154,9 +1159,10 @@
     return fetchPledgePageFresh(url);
   }
 
-  async function fetchPledgePageFresh(url) {
+  async function fetchPledgePageFresh(url, cacheMode = "default") {
     const response = await fetch(url, {
-      credentials: "same-origin"
+      credentials: "same-origin",
+      cache: cacheMode
     });
 
     if (!response.ok) {
@@ -1199,9 +1205,9 @@
   async function getCachedPledgeAggregate() {
     const cachedFromDb = await getSessionCacheEntry(PLEDGE_AGGREGATE_CACHE_KEY);
     if (Array.isArray(cachedFromDb?.cards)) {
-      return cachedFromDb.cards
+      return withoutRemovedPledges(cachedFromDb.cards
         .map(parseCachedPledgeEntry)
-        .filter(Boolean);
+        .filter(Boolean));
     }
 
     try {
@@ -1210,9 +1216,9 @@
         return [];
       }
 
-      const cards = cached.cards
+      const cards = withoutRemovedPledges(cached.cards
         .map(parseCachedPledgeEntry)
-        .filter(Boolean);
+        .filter(Boolean));
       await setCachedPledgeAggregate(cards);
       sessionStorage.removeItem(PLEDGE_AGGREGATE_CACHE_KEY);
       return cards;
@@ -1376,6 +1382,133 @@
       .forEach((key) => sessionStorage.removeItem(key));
   }
 
+  function getRemovedPledgeIds() {
+    try {
+      const parsed = JSON.parse(sessionStorage.getItem(REMOVED_PLEDGE_IDS_KEY) ?? "[]");
+      return new Set(Array.isArray(parsed) ? parsed.filter((id) => typeof id === "string" && id) : []);
+    } catch {
+      return new Set();
+    }
+  }
+
+  function rememberRemovedPledgeId(pledgeId) {
+    if (!pledgeId) {
+      return;
+    }
+
+    const removedIds = getRemovedPledgeIds();
+    removedIds.add(pledgeId);
+    sessionStorage.setItem(REMOVED_PLEDGE_IDS_KEY, JSON.stringify([...removedIds]));
+  }
+
+  function clearRemovedPledgeIds() {
+    sessionStorage.removeItem(REMOVED_PLEDGE_IDS_KEY);
+  }
+
+  function withoutRemovedPledges(cards) {
+    const removedIds = getRemovedPledgeIds();
+    if (removedIds.size === 0) {
+      return cards;
+    }
+
+    return cards.filter((card) => {
+      const pledgeId = getPledgeId(card);
+      return !pledgeId || !removedIds.has(pledgeId);
+    });
+  }
+
+  async function reloadPledgesFromServer() {
+    if (refreshInProgress) {
+      return;
+    }
+
+    refreshInProgress = true;
+    setLoadingState(true, "Reloading pledges...");
+    setToolbarLoading(currentTotalCards, "Reloading pledges...");
+
+    try {
+      const cards = await fetchAllFreshPledgeCards();
+      clearRemovedPledgeIds();
+      await clearPledgePageCache();
+      replaceVisiblePledges(cards);
+      await setCachedPledgeAggregate(currentCards);
+    } catch (error) {
+      console.warn("Hangar Helper could not reload pledges", error);
+      updateStatus(document.getElementById(ROOT_ID), currentFilteredGroups.length, getFilteredPledgeCount(), currentTotalCards);
+    } finally {
+      refreshInProgress = false;
+      setLoadingState(false);
+    }
+  }
+
+  async function fetchAllFreshPledgeCards() {
+    const firstPageUrl = getPledgePageUrl(1);
+    setToolbarLoading(0, "Reloading pledge page 1...");
+    const firstPageDocument = await fetchPledgePageFresh(firstPageUrl, "no-store");
+    const cards = [...importPledgeCards(firstPageDocument)];
+    const pageUrls = getPledgePageUrls(firstPageDocument)
+      .filter((pageUrl) => normalizeUrl(pageUrl) !== firstPageUrl);
+
+    for (let offset = 0; offset < pageUrls.length; offset += FETCH_CONCURRENCY) {
+      const batch = pageUrls.slice(offset, offset + FETCH_CONCURRENCY);
+      const pageRange = `${offset + 2}-${offset + batch.length + 1}`;
+      setToolbarLoading(cards.length, `Reloading pledge pages ${pageRange} of ${pageUrls.length + 1}...`);
+
+      const pageDocuments = await Promise.all(batch.map((pageUrl) => fetchPledgePageFresh(pageUrl, "no-store")));
+      pageDocuments.forEach((pageDocument) => {
+        cards.push(...importPledgeCards(pageDocument));
+      });
+    }
+
+    return dedupeCards(cards);
+  }
+
+  function replaceVisiblePledges(cards) {
+    const parent = getLivePledgeListParent();
+    removeLivePledgeCards(findPledgeCards());
+    document.querySelectorAll(SUMMARY_SELECTOR).forEach((summary) => summary.remove());
+    currentCards = dedupeCards(cards);
+    isAggregated = true;
+    currentPage = 1;
+    currentCards.forEach((card) => parent?.appendChild(card));
+    rebuildView();
+  }
+
+  async function forgetExchangedPledge(card) {
+    const pledgeId = getPledgeId(card);
+    rememberRemovedPledgeId(pledgeId);
+    const removedIds = getRemovedPledgeIds();
+    currentCards = currentCards.filter((candidate) => {
+      if (candidate === card) {
+        return false;
+      }
+
+      const candidateId = getPledgeId(candidate);
+      return !candidateId || !removedIds.has(candidateId);
+    });
+
+    if (card.isConnected) {
+      card.remove();
+    }
+
+    await setCachedPledgeAggregate(currentCards);
+    rebuildView();
+  }
+
+  function isExchangeControl(target) {
+    const control = target.closest("a, button, input[type='submit'], input[type='button']");
+    if (!(control instanceof HTMLElement) || control.closest(`#${ROOT_ID}`)) {
+      return false;
+    }
+
+    if (control.matches(".js-reclaim, [class*='reclaim']")) {
+      return true;
+    }
+
+    const label = control instanceof HTMLInputElement ? control.value : control.textContent;
+    return /^\s*exchange\b/i.test((label ?? "").trim());
+  }
+
   function startBackgroundRefresh() {
     if (refreshIntervalId) {
       return;
@@ -1404,9 +1537,10 @@
           break;
         }
 
+        const removedIds = getRemovedPledgeIds();
         const unknownCards = pageCards.filter((card) => {
           const pledgeId = getPledgeId(card);
-          return pledgeId && !knownPledgeIds.has(pledgeId);
+          return pledgeId && !knownPledgeIds.has(pledgeId) && !removedIds.has(pledgeId);
         });
 
         if (unknownCards.length === 0) {
@@ -1423,7 +1557,7 @@
       }
 
       if (newCards.length > 0) {
-        currentCards = dedupeCards([...newCards, ...currentCards]);
+        currentCards = withoutRemovedPledges(dedupeCards([...newCards, ...currentCards]));
         await setCachedPledgeAggregate(currentCards);
         rebuildView();
         const toolbar = document.getElementById(ROOT_ID);
@@ -1861,9 +1995,24 @@
   function start() {
     if (isBuyBackPage()) {
       renderBuyBacks();
-    } else {
-      render();
+      return;
     }
+
+    document.addEventListener("click", (event) => {
+      const target = event.target;
+      if (!(target instanceof Element) || !isExchangeControl(target)) {
+        return;
+      }
+
+      const card = target.closest(CARD_SELECTOR);
+      if (!(card instanceof HTMLElement) || !isLikelyPledgeCard(card)) {
+        return;
+      }
+
+      void forgetExchangedPledge(card);
+    }, true);
+
+    render();
   }
 
   if (document.readyState === "loading") {
